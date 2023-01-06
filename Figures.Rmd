@@ -1,0 +1,1480 @@
+---
+title: "Untitled"
+author: "Al Kovaleski"
+date: "6/29/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(lubridate)
+library(viridis)
+library(ggplot2)
+library(chillR)
+library(patchwork)
+
+parms=data.frame(c("Concord","Cabernet_Sauvignon","Riesling"),
+                 c(0,0,0),
+                 c(12,8,12),
+                 c(8,7,7),
+                 c(66,66,66),
+                 c(31,23,26),
+                 c(6,6,6),
+                 c(-2.1,-2.2,-1.9),
+                 c(24,22,24),
+                 c(1.9,1.8,2.2),
+                 c(3.5,5,5),
+                 c(3,6,3),
+                 c(5,3,4))
+
+
+
+
+
+colnames(parms)=c("Cultivar","tliml","tlimh","tlimb","tlime","m","n","b","c","kdeacc","a","slp","int")
+
+
+
+
+options(max.print=9000)
+dat=read.csv("DataCH_allCVs_allPIs.csv")
+
+dat$Date=as.Date(dat$Date, format="%m/%d/%y")
+
+
+daysearly=0
+
+dat$Dataset=paste((as.numeric(year(dat$Date))-1),as.numeric(year(dat$Date)),sep="-" )
+
+dat$Dataset[month(dat$Date)>7]=paste((as.numeric(year(dat$Date[month(dat$Date)>7]))),(as.numeric(year(dat$Date[month(dat$Date)>7]))+1),sep="-" )
+
+
+dat$Cultivar=as.factor(dat$Cultivar)
+dat$Dataset=as.factor(dat$Dataset)
+dat$Date=as.POSIXct(dat$Date)+64800
+
+levels(dat$Cultivar)
+
+dat2=subset(dat, Cultivar %in% c("Concord","Cabernet_Sauvignon","Riesling"))
+dat2$Dataset=factor(dat2$Dataset)
+
+levels(dat2$Dataset) #8 levels = 5 calibration, 3 validation
+
+
+
+dat3=aggregate(LTE~Cultivar+Date+Dataset,dat2,mean)
+
+dat3b=aggregate(LTE~Cultivar+Date+Dataset+PI,dat2,mean)
+
+dat4=aggregate(LTE~Cultivar+Date+Dataset+PI,dat2,sd)
+
+dat5=aggregate(LTE~Cultivar+Date+Dataset+PI,dat2,length)
+
+colnames(dat3b)=c("Cultivar","Date","Dataset","Program","LTE")
+colnames(dat4)=c("Cultivar","Date","Dataset","Program","Standard Error")
+colnames(dat5)=c("Cultivar","Date","Dataset","Program","n")
+
+dat3b=merge(dat3b,dat4)
+dat3b=merge(dat3b,dat5)
+
+dat3b$Date=substr(as.character(dat3b$Date),1,10)
+
+
+wdat=read.csv("DataWeather.csv")
+summary(wdat)
+
+wdat=wdat[c(1,10)]
+
+
+wdat$DateTime=as.POSIXct(as.character(wdat$DateTime),format="%m/%d/%y %H:%M")
+wdat$Dataset=paste((as.numeric(year(wdat$DateTime))-1),as.numeric(year(wdat$DateTime)),sep="-" )
+
+wdat$Dataset[month(wdat$Date)>7]=paste((as.numeric(year(wdat$Date[month(wdat$Date)>7]))),(as.numeric(year(wdat$Date[month(wdat$Date)>7]))+1),sep="-" )
+wdat$Portions = 0
+
+wdat2=NULL
+
+for (i in levels(factor(wdat$Dataset))) {
+  
+  wdatsub=subset(wdat, Dataset %in% i)
+  
+  wdatsub$Portions=Dynamic_Model(wdatsub$TempC)
+  
+  wdat2=rbind(wdat2,wdatsub)
+  
+  
+  
+}
+
+
+wdat2$Date=as.POSIXct(format(wdat2$DateTime, format="%Y-%m-%d"))
+
+wdat2=subset(wdat2, Dataset %in% c("2012-2013", "2013-2014", "2014-2015", "2015-2016", "2016-2017", "2017-2018", "2018-2019", "2019-2020", "2020-2021"))
+
+
+wdat4=aggregate(.~Date+Dataset,wdat2,max)
+wdat3=aggregate(.~Date+Dataset,wdat2,min)
+
+wdat4=wdat4[c(1,4)]
+wdat3=wdat3[c(1,4)]
+
+colnames(wdat4)=c("Date","MaxC")
+colnames(wdat3)=c("Date","MinC")
+
+
+
+
+wdat2a=wdat2
+
+wdat2b=aggregate(.~Date+Dataset,wdat2a,mean)
+
+
+wdat2c=merge(wdat2b,wdat4)
+wdat2c=merge(wdat2c,wdat3)
+
+wdat2c$MaxC=as.numeric(wdat2c$MaxC)
+wdat2c$MinC=as.numeric(wdat2c$MinC)
+
+
+preds=NULL
+predsferg=NULL
+
+
+#### Concord predictions ####
+{
+tliml=parms$tliml[parms$Cultivar=="Concord"]
+tlimh=parms$tlimh[parms$Cultivar=="Concord"]
+tlimb=parms$tlimb[parms$Cultivar=="Concord"]
+tlime=parms$tlime[parms$Cultivar=="Concord"]
+m=parms$m[parms$Cultivar=="Concord"]
+n=parms$n[parms$Cultivar=="Concord"]
+b=parms$b[parms$Cultivar=="Concord"]
+c=parms$c[parms$Cultivar=="Concord"]
+kdeacc=parms$kdeacc[parms$Cultivar=="Concord"]
+a=parms$a[parms$Cultivar=="Concord"]
+Tmax=40
+Topt=25
+slp=parms$slp[parms$Cultivar=="Concord"]
+int=parms$int[parms$Cultivar=="Concord"]
+
+
+wdat2c$kdeacc=(0.00*wdat2c$MaxC + 0.00*wdat2c$MinC)
+
+
+
+wdat2c$kdeacc[wdat2c$MaxC>0 & wdat2c$MinC>0]= ((kdeacc*(((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt)))))+(kdeacc*(((Tmax-wdat2c$MinC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MinC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))))))/2
+
+
+wdat2c$kdeacc[wdat2c$MaxC>0 & wdat2c$MinC<=0]=(kdeacc*(((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC<=0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC<=0])/(Tmax-Topt)))))/2
+
+
+
+
+wdat2c$kdeacc[wdat2c$kdeacc<0]=0
+
+wdat2c$Deaccpot=1/(1+exp((-tlimb)*(log(wdat2c$Portions)- log(tlime))))
+
+
+wdat2c$deacc=wdat2c$Deaccpot*(wdat2c$kdeacc)
+
+
+
+wdat2c$CH=-n
+
+
+Time=seq(0.1,500,0.1)
+
+Resp=1/(1+exp(b*(log(Time)-log(c))))
+
+
+test=data.frame(Time, Resp)
+
+
+wdat2c$CHmax=0
+
+wdat2c$sumdeacc=0
+
+wdatvalb=NULL
+
+
+for (y in levels(factor(wdat2c$Dataset))) {
+
+wdatvalsubb=subset(wdat2c, Dataset %in% y)
+wdatvalsubb$month=month(wdatvalsubb$Date)
+wdatvalsub=subset(wdatvalsubb, month %in% c(9,10,11,12,1,2,3,4,5,6))
+wdatvalsub$acc=0
+
+for (t in 2:nrow(wdatvalsub)) {
+
+wdatvalsub$sumdeacc[t]=wdatvalsub$sumdeacc[t-1]+wdatvalsub$kdeacc[t]*wdatvalsub$Deaccpot[t]
+
+
+}
+
+
+rownames(wdatvalsub)=NULL
+
+wdatvalsub$tlim=tliml+((tlimh-tliml)/(1+exp(tlimb*(log(wdatvalsub$Portions)-log(tlime)) )) )
+
+
+
+for (u in (2):nrow(wdatvalsub)) {
+
+if (wdatvalsub$MinC[u]<wdatvalsub$tlim[u]) {
+
+Tmin=wdatvalsub$MinC[u]
+Tlimmin=wdatvalsub$tlim[u]
+
+CHmax= -(n+(m-n)/(1+exp(-slp*(log(-Tmin+Tlimmin)-log(int)))))
+
+lev=wdatvalsub$CH[u-1]/CHmax
+
+if (lev>1) {
+lev=1
+CHmax=CHmax
+}
+
+
+
+
+
+} else {
+lev=1
+CHmax=-n
+}
+
+
+j=min(which(abs(lev-test$Resp)==min(abs(lev-test$Resp))))
+
+ti=test$Time[j]
+
+u2=u-1
+
+
+wdatvalsub$acc[u]=(CHmax+n)*(0.001+(((exp(b * (log(ti) - log(c))))* ((-b) * (1/ti)))/((1+exp(b * (log(ti) - log(c))))^2)))
+
+wdatvalsub$CH[u]=wdatvalsub$CH[u2]+wdatvalsub$acc[u]+wdatvalsub$deacc[u]
+
+
+}
+
+
+wdatvalb=rbind(wdatvalb, wdatvalsub)
+
+
+
+}
+
+wdatvalb$Cultivar=as.factor("Concord")
+preds=rbind(preds,wdatvalb)
+
+}
+
+
+{endoTth=13
+ecoTth=3
+
+kaendo=0.12
+kdendo=0.02
+kaeco=0.1
+kdeco=0.1
+
+Hcinitial=-12.8
+Hcmax=-29.5
+Hcmin=-2.5
+
+Theta=3
+boundEDB=-600
+
+wdat2cferg=wdat2c[1:7]
+wdat2cferg$Tmean=(wdat2cferg$MaxC+wdat2cferg$MinC)/2
+
+wdat5ferg=NULL
+
+
+for (j in levels(factor(wdat2cferg$Dataset))) {
+  
+  wdat4ferg=subset(wdat2cferg, Dataset %in% j)
+  
+  rownames(wdat4ferg)=NULL
+
+  modelstart=as.numeric(rownames(wdat4ferg)[wdat4ferg$Tmean<endoTth][1])
+  
+  if (modelstart==1) {modelstart=2}
+  
+  
+  wdat4ferg$Tthendo=wdat4ferg$Tmean-endoTth
+  
+  wdat4ferg$DDcendo=0
+  wdat4ferg$DDcendo[wdat4ferg$Tthendo<0]=wdat4ferg$Tthendo[wdat4ferg$Tthendo<0]
+  
+  wdat4ferg$DDhendo=0
+  wdat4ferg$DDhendo[wdat4ferg$Tthendo>0]=wdat4ferg$Tthendo[wdat4ferg$Tthendo>0]
+  
+  wdat4ferg$EDB=0
+  wdat4ferg$EDBday=0
+  wdat4ferg$EDBday[wdat4ferg$Tmean<=10]=wdat4ferg$Tmean[wdat4ferg$Tmean<=10]-10
+  
+  
+  for (i in c(modelstart:nrow(wdat4ferg))) {
+    
+    wdat4ferg$EDB[i]=sum(wdat4ferg$EDBday[modelstart:i])
+    
+  }
+  
+  
+  
+  wdat4ferg$Ttheco=wdat4ferg$Tmean-ecoTth
+  
+  wdat4ferg$DDceco=0
+  wdat4ferg$DDceco[wdat4ferg$Ttheco<0]=wdat4ferg$Ttheco[wdat4ferg$Ttheco<0]
+  
+  wdat4ferg$DDheco=0
+  wdat4ferg$DDheco[wdat4ferg$Ttheco>0]=wdat4ferg$Ttheco[wdat4ferg$Ttheco>0]
+  
+  
+  wdat4ferg$DDhendo[wdat4ferg$EDB<(boundEDB)]=0
+  wdat4ferg$DDcendo[wdat4ferg$EDB<(boundEDB)]=0
+  
+  wdat4ferg$DDheco[wdat4ferg$EDB>(boundEDB)]=0
+  wdat4ferg$DDceco[wdat4ferg$EDB>(boundEDB)]=0
+  
+  
+  wdat4ferg$CH=Hcinitial
+  
+  
+  for (i in c(modelstart:nrow(wdat4ferg))) {
+    
+    wdat4ferg$CH[i]=wdat4ferg$CH[i-1]+ 
+      ((wdat4ferg$DDcendo[i]*kaendo+wdat4ferg$DDceco[i]*kaeco)*(1-((Hcmin - wdat4ferg$CH[i-1])/(Hcmin - Hcmax)))+
+         (wdat4ferg$DDhendo[i]*kdendo)*((1- ((wdat4ferg$CH[i-1]-Hcmax)/(Hcmin - Hcmax))^Theta))+
+         (wdat4ferg$DDheco[i]*kdeco)*  ((1- ((wdat4ferg$CH[i-1]-Hcmax)/(Hcmin - Hcmax))^Theta)))
+    
+  }
+  
+  
+  wdat5ferg=rbind(wdat5ferg,wdat4ferg)
+  
+  
+
+}
+
+wdat5ferg$Cultivar=as.factor("Concord")
+predsferg=rbind(predsferg,wdat5ferg)
+
+}
+
+
+
+#### Cab Sauv Predictions ####
+{
+tliml=parms$tliml[parms$Cultivar=="Cabernet_Sauvignon"]
+tlimh=parms$tlimh[parms$Cultivar=="Cabernet_Sauvignon"]
+tlimb=parms$tlimb[parms$Cultivar=="Cabernet_Sauvignon"]
+tlime=parms$tlime[parms$Cultivar=="Cabernet_Sauvignon"]
+m=parms$m[parms$Cultivar=="Cabernet_Sauvignon"]
+n=parms$n[parms$Cultivar=="Cabernet_Sauvignon"]
+b=parms$b[parms$Cultivar=="Cabernet_Sauvignon"]
+c=parms$c[parms$Cultivar=="Cabernet_Sauvignon"]
+kdeacc=parms$kdeacc[parms$Cultivar=="Cabernet_Sauvignon"]
+a=parms$a[parms$Cultivar=="Cabernet_Sauvignon"]
+Tmax=40
+Topt=25
+slp=parms$slp[parms$Cultivar=="Cabernet_Sauvignon"]
+int=parms$int[parms$Cultivar=="Cabernet_Sauvignon"]
+
+
+wdat2c$kdeacc=(0.00*wdat2c$MaxC + 0.00*wdat2c$MinC)
+
+
+
+wdat2c$kdeacc[wdat2c$MaxC>0 & wdat2c$MinC>0]= ((kdeacc*(((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt)))))+(kdeacc*(((Tmax-wdat2c$MinC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MinC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))))))/2
+
+
+wdat2c$kdeacc[wdat2c$MaxC>0 & wdat2c$MinC<=0]=(kdeacc*(((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC<=0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC<=0])/(Tmax-Topt)))))/2
+
+
+
+
+wdat2c$kdeacc[wdat2c$kdeacc<0]=0
+
+wdat2c$Deaccpot=1/(1+exp((-tlimb)*(log(wdat2c$Portions)- log(tlime))))
+
+
+wdat2c$deacc=wdat2c$Deaccpot*(wdat2c$kdeacc)
+
+
+
+wdat2c$CH=-n
+
+
+Time=seq(0.1,500,0.1)
+
+Resp=1/(1+exp(b*(log(Time)-log(c))))
+
+
+test=data.frame(Time, Resp)
+
+
+wdat2c$CHmax=0
+
+wdat2c$sumdeacc=0
+
+wdatvalb=NULL
+
+
+for (y in levels(factor(wdat2c$Dataset))) {
+
+wdatvalsubb=subset(wdat2c, Dataset %in% y)
+wdatvalsubb$month=month(wdatvalsubb$Date)
+wdatvalsub=subset(wdatvalsubb, month %in% c(9,10,11,12,1,2,3,4,5,6))
+wdatvalsub$acc=0
+
+for (t in 2:nrow(wdatvalsub)) {
+
+wdatvalsub$sumdeacc[t]=wdatvalsub$sumdeacc[t-1]+wdatvalsub$kdeacc[t]*wdatvalsub$Deaccpot[t]
+
+
+}
+
+
+rownames(wdatvalsub)=NULL
+
+wdatvalsub$tlim=tliml+((tlimh-tliml)/(1+exp(tlimb*(log(wdatvalsub$Portions)-log(tlime)) )) )
+
+
+
+for (u in (2):nrow(wdatvalsub)) {
+
+if (wdatvalsub$MinC[u]<wdatvalsub$tlim[u]) {
+
+Tmin=wdatvalsub$MinC[u]
+Tlimmin=wdatvalsub$tlim[u]
+
+CHmax= -(n+(m-n)/(1+exp(-slp*(log(-Tmin+Tlimmin)-log(int)))))
+
+lev=wdatvalsub$CH[u-1]/CHmax
+
+if (lev>1) {
+lev=1
+CHmax=CHmax
+}
+
+
+
+
+
+} else {
+lev=1
+CHmax=-n
+}
+
+
+j=min(which(abs(lev-test$Resp)==min(abs(lev-test$Resp))))
+
+ti=test$Time[j]
+
+u2=u-1
+
+
+wdatvalsub$acc[u]=(CHmax+n)*(0.001+(((exp(b * (log(ti) - log(c))))* ((-b) * (1/ti)))/((1+exp(b * (log(ti) - log(c))))^2)))
+
+wdatvalsub$CH[u]=wdatvalsub$CH[u2]+wdatvalsub$acc[u]+wdatvalsub$deacc[u]
+
+
+}
+
+
+wdatvalb=rbind(wdatvalb, wdatvalsub)
+
+
+}
+
+wdatvalb$Cultivar=as.factor("Cabernet_Sauvignon")
+preds=rbind(preds,wdatvalb)
+
+}
+
+
+{
+endoTth=13
+ecoTth=5
+
+kaendo=0.12
+kdendo=0.08
+kaeco=0.1
+kdeco=0.1
+
+Hcinitial=-10.3
+Hcmax=-25.1
+Hcmin=-1.2
+
+Theta=7
+boundEDB=-700
+
+
+wdat2cferg=wdat2c[1:7]
+wdat2cferg$Tmean=(wdat2cferg$MaxC+wdat2cferg$MinC)/2
+
+wdat5ferg=NULL
+
+
+for (j in levels(factor(wdat2cferg$Dataset))) {
+  
+  wdat4ferg=subset(wdat2cferg, Dataset %in% j)
+  
+  rownames(wdat4ferg)=NULL
+
+  modelstart=as.numeric(rownames(wdat4ferg)[wdat4ferg$Tmean<endoTth][1])
+  
+  if (modelstart==1) {modelstart=2}
+  
+  
+  wdat4ferg$Tthendo=wdat4ferg$Tmean-endoTth
+  
+  wdat4ferg$DDcendo=0
+  wdat4ferg$DDcendo[wdat4ferg$Tthendo<0]=wdat4ferg$Tthendo[wdat4ferg$Tthendo<0]
+  
+  wdat4ferg$DDhendo=0
+  wdat4ferg$DDhendo[wdat4ferg$Tthendo>0]=wdat4ferg$Tthendo[wdat4ferg$Tthendo>0]
+  
+  wdat4ferg$EDB=0
+  wdat4ferg$EDBday=0
+  wdat4ferg$EDBday[wdat4ferg$Tmean<=10]=wdat4ferg$Tmean[wdat4ferg$Tmean<=10]-10
+  
+  
+  for (i in c(modelstart:nrow(wdat4ferg))) {
+    
+    wdat4ferg$EDB[i]=sum(wdat4ferg$EDBday[modelstart:i])
+    
+  }
+  
+  
+  
+  wdat4ferg$Ttheco=wdat4ferg$Tmean-ecoTth
+  
+  wdat4ferg$DDceco=0
+  wdat4ferg$DDceco[wdat4ferg$Ttheco<0]=wdat4ferg$Ttheco[wdat4ferg$Ttheco<0]
+  
+  wdat4ferg$DDheco=0
+  wdat4ferg$DDheco[wdat4ferg$Ttheco>0]=wdat4ferg$Ttheco[wdat4ferg$Ttheco>0]
+  
+  
+  wdat4ferg$DDhendo[wdat4ferg$EDB<(boundEDB)]=0
+  wdat4ferg$DDcendo[wdat4ferg$EDB<(boundEDB)]=0
+  
+  wdat4ferg$DDheco[wdat4ferg$EDB>(boundEDB)]=0
+  wdat4ferg$DDceco[wdat4ferg$EDB>(boundEDB)]=0
+  
+  
+  wdat4ferg$CH=Hcinitial
+  
+  
+  for (i in c(modelstart:nrow(wdat4ferg))) {
+    
+    wdat4ferg$CH[i]=wdat4ferg$CH[i-1]+ 
+      ((wdat4ferg$DDcendo[i]*kaendo+wdat4ferg$DDceco[i]*kaeco)*(1-((Hcmin - wdat4ferg$CH[i-1])/(Hcmin - Hcmax)))+
+         (wdat4ferg$DDhendo[i]*kdendo)*((1- ((wdat4ferg$CH[i-1]-Hcmax)/(Hcmin - Hcmax))^Theta))+
+         (wdat4ferg$DDheco[i]*kdeco)*  ((1- ((wdat4ferg$CH[i-1]-Hcmax)/(Hcmin - Hcmax))^Theta)))
+    
+  }
+  
+  
+  wdat5ferg=rbind(wdat5ferg,wdat4ferg)
+  
+  
+
+}
+
+wdat5ferg$Cultivar=as.factor("Cabernet_Sauvignon")
+predsferg=rbind(predsferg,wdat5ferg)
+
+}
+
+
+
+#### Riesling Predictions ####
+{
+tliml=parms$tliml[parms$Cultivar=="Riesling"]
+tlimh=parms$tlimh[parms$Cultivar=="Riesling"]
+tlimb=parms$tlimb[parms$Cultivar=="Riesling"]
+tlime=parms$tlime[parms$Cultivar=="Riesling"]
+m=parms$m[parms$Cultivar=="Riesling"]
+n=parms$n[parms$Cultivar=="Riesling"]
+b=parms$b[parms$Cultivar=="Riesling"]
+c=parms$c[parms$Cultivar=="Riesling"]
+kdeacc=parms$kdeacc[parms$Cultivar=="Riesling"]
+a=parms$a[parms$Cultivar=="Riesling"]
+Tmax=40
+Topt=25
+slp=parms$slp[parms$Cultivar=="Riesling"]
+int=parms$int[parms$Cultivar=="Riesling"]
+
+
+wdat2c$kdeacc=(0.00*wdat2c$MaxC + 0.00*wdat2c$MinC)
+
+
+
+wdat2c$kdeacc[wdat2c$MaxC>0 & wdat2c$MinC>0]= ((kdeacc*(((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt)))))+(kdeacc*(((Tmax-wdat2c$MinC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MinC[wdat2c$MaxC>0 & wdat2c$MinC>0])/(Tmax-Topt))))))/2
+
+
+wdat2c$kdeacc[wdat2c$MaxC>0 & wdat2c$MinC<=0]=(kdeacc*(((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC<=0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdat2c$MaxC[wdat2c$MaxC>0 & wdat2c$MinC<=0])/(Tmax-Topt)))))/2
+
+
+
+
+wdat2c$kdeacc[wdat2c$kdeacc<0]=0
+
+wdat2c$Deaccpot=1/(1+exp((-tlimb)*(log(wdat2c$Portions)- log(tlime))))
+
+
+wdat2c$deacc=wdat2c$Deaccpot*(wdat2c$kdeacc)
+
+
+
+wdat2c$CH=-n
+
+
+Time=seq(0.1,500,0.1)
+
+Resp=1/(1+exp(b*(log(Time)-log(c))))
+
+
+test=data.frame(Time, Resp)
+
+
+wdat2c$CHmax=0
+
+wdat2c$sumdeacc=0
+
+wdatvalb=NULL
+
+
+for (y in levels(factor(wdat2c$Dataset))) {
+
+wdatvalsubb=subset(wdat2c, Dataset %in% y)
+wdatvalsubb$month=month(wdatvalsubb$Date)
+wdatvalsub=subset(wdatvalsubb, month %in% c(9,10,11,12,1,2,3,4,5,6))
+wdatvalsub$acc=0
+
+for (t in 2:nrow(wdatvalsub)) {
+
+wdatvalsub$sumdeacc[t]=wdatvalsub$sumdeacc[t-1]+wdatvalsub$kdeacc[t]*wdatvalsub$Deaccpot[t]
+
+
+}
+
+
+rownames(wdatvalsub)=NULL
+
+wdatvalsub$tlim=tliml+((tlimh-tliml)/(1+exp(tlimb*(log(wdatvalsub$Portions)-log(tlime)) )) )
+
+
+
+for (u in (2):nrow(wdatvalsub)) {
+
+if (wdatvalsub$MinC[u]<wdatvalsub$tlim[u]) {
+
+Tmin=wdatvalsub$MinC[u]
+Tlimmin=wdatvalsub$tlim[u]
+
+CHmax= -(n+(m-n)/(1+exp(-slp*(log(-Tmin+Tlimmin)-log(int)))))
+
+lev=wdatvalsub$CH[u-1]/CHmax
+
+if (lev>1) {
+lev=1
+CHmax=CHmax
+}
+
+
+
+
+
+} else {
+lev=1
+CHmax=-n
+}
+
+
+j=min(which(abs(lev-test$Resp)==min(abs(lev-test$Resp))))
+
+ti=test$Time[j]
+
+u2=u-1
+
+
+wdatvalsub$acc[u]=(CHmax+n)*(0.001+(((exp(b * (log(ti) - log(c))))* ((-b) * (1/ti)))/((1+exp(b * (log(ti) - log(c))))^2)))
+
+wdatvalsub$CH[u]=wdatvalsub$CH[u2]+wdatvalsub$acc[u]+wdatvalsub$deacc[u]
+
+
+}
+
+
+wdatvalb=rbind(wdatvalb, wdatvalsub)
+
+
+}
+
+wdatvalb$Cultivar=as.factor("Riesling")
+preds=rbind(preds,wdatvalb)
+
+}
+
+
+{
+endoTth=12
+ecoTth=5
+
+kaendo=0.14
+kdendo=0.02
+kaeco=0.1
+kdeco=0.12
+
+Hcinitial=-12.6
+Hcmax=-26.1
+Hcmin=-1.2
+
+Theta=7
+boundEDB=-700
+
+
+wdat2cferg=wdat2c[1:7]
+wdat2cferg$Tmean=(wdat2cferg$MaxC+wdat2cferg$MinC)/2
+
+wdat5ferg=NULL
+
+
+for (j in levels(factor(wdat2cferg$Dataset))) {
+  
+  wdat4ferg=subset(wdat2cferg, Dataset %in% j)
+  
+  rownames(wdat4ferg)=NULL
+
+  modelstart=as.numeric(rownames(wdat4ferg)[wdat4ferg$Tmean<endoTth][1])
+  
+  if (modelstart==1) {modelstart=2}
+  
+  
+  wdat4ferg$Tthendo=wdat4ferg$Tmean-endoTth
+  
+  wdat4ferg$DDcendo=0
+  wdat4ferg$DDcendo[wdat4ferg$Tthendo<0]=wdat4ferg$Tthendo[wdat4ferg$Tthendo<0]
+  
+  wdat4ferg$DDhendo=0
+  wdat4ferg$DDhendo[wdat4ferg$Tthendo>0]=wdat4ferg$Tthendo[wdat4ferg$Tthendo>0]
+  
+  wdat4ferg$EDB=0
+  wdat4ferg$EDBday=0
+  wdat4ferg$EDBday[wdat4ferg$Tmean<=10]=wdat4ferg$Tmean[wdat4ferg$Tmean<=10]-10
+  
+  
+  for (i in c(modelstart:nrow(wdat4ferg))) {
+    
+    wdat4ferg$EDB[i]=sum(wdat4ferg$EDBday[modelstart:i])
+    
+  }
+  
+  
+  
+  wdat4ferg$Ttheco=wdat4ferg$Tmean-ecoTth
+  
+  wdat4ferg$DDceco=0
+  wdat4ferg$DDceco[wdat4ferg$Ttheco<0]=wdat4ferg$Ttheco[wdat4ferg$Ttheco<0]
+  
+  wdat4ferg$DDheco=0
+  wdat4ferg$DDheco[wdat4ferg$Ttheco>0]=wdat4ferg$Ttheco[wdat4ferg$Ttheco>0]
+  
+  
+  wdat4ferg$DDhendo[wdat4ferg$EDB<(boundEDB)]=0
+  wdat4ferg$DDcendo[wdat4ferg$EDB<(boundEDB)]=0
+  
+  wdat4ferg$DDheco[wdat4ferg$EDB>(boundEDB)]=0
+  wdat4ferg$DDceco[wdat4ferg$EDB>(boundEDB)]=0
+  
+  
+  wdat4ferg$CH=Hcinitial
+  
+  
+  for (i in c(modelstart:nrow(wdat4ferg))) {
+    
+    wdat4ferg$CH[i]=wdat4ferg$CH[i-1]+ 
+      ((wdat4ferg$DDcendo[i]*kaendo+wdat4ferg$DDceco[i]*kaeco)*(1-((Hcmin - wdat4ferg$CH[i-1])/(Hcmin - Hcmax)))+
+         (wdat4ferg$DDhendo[i]*kdendo)*((1- ((wdat4ferg$CH[i-1]-Hcmax)/(Hcmin - Hcmax))^Theta))+
+         (wdat4ferg$DDheco[i]*kdeco)*  ((1- ((wdat4ferg$CH[i-1]-Hcmax)/(Hcmin - Hcmax))^Theta)))
+    
+  }
+  
+  
+  wdat5ferg=rbind(wdat5ferg,wdat4ferg)
+  
+  
+
+}
+
+wdat5ferg$Cultivar=as.factor("Riesling")
+predsferg=rbind(predsferg,wdat5ferg)
+
+}
+
+```
+
+
+
+
+```{r}
+#### Figure 1 ####
+
+tlimlf =  data.frame(seq(-6,0,2))  
+tlimhf =  data.frame(seq(6,14,2))  
+tlimbf =  data.frame(seq(6,11,1))
+tlimef =  data.frame(c(66))
+
+nf = data.frame(c(6))  
+bf = data.frame(seq(-2.3,-1.7,0.1))  
+cf =  data.frame(seq(12,24,2))  
+kdeaccf =  data.frame(seq(2.4,1.9,-0.1)) 
+af =  data.frame(c(3.5,4,4.5,5))
+
+
+mf =  data.frame(m)
+slpf=  data.frame(seq(2,7,1))
+intf = data.frame(seq(2,5,1))
+
+
+tlim.df=data.frame(Chill=seq(0,150,0.1))
+tlim.df=merge(tlim.df,tlimlf)
+tlim.df=merge(tlim.df,tlimhf)
+tlim.df=merge(tlim.df,tlimbf)
+colnames(tlim.df)=c("Chill","tliml","tlimh","tlimb")
+
+tlim.df$grp=paste(tlim.df$tliml, tlim.df$tlimh, tlim.df$tlimb, sep=" ")
+
+tlim.df$tlim=tlim.df$tliml+(tlim.df$tlimh-tlim.df$tliml)/(1+exp(tlim.df$tlimb*(log(tlim.df$Chill)-log(66))))
+
+tlim.cult=data.frame(Chill=seq(0,150,0.1))
+tlim.cult=merge(tlim.cult,parms)
+
+tlim.cult$tlim=tlim.cult$tliml+(tlim.cult$tlimh-tlim.cult$tliml)/(1+exp(tlim.cult$tlimb*(log(tlim.cult$Chill)-log(66))))
+
+
+
+
+
+
+
+CHmax.df=data.frame(deltaTemp=seq(0,30,0.25))
+CHmax.df=merge(CHmax.df,slpf)
+CHmax.df=merge(CHmax.df,intf)
+colnames(CHmax.df)=c("deltaTemp","slp","int")
+
+CHmax.df$CHmax= 6+(31-6)/(1+exp(-CHmax.df$slp*(log(CHmax.df$deltaTemp)-log(CHmax.df$int))))
+
+CHmax.df$grp=paste(CHmax.df$slp, CHmax.df$int, sep=" ")
+
+
+CHmax.cult=data.frame(deltaTemp=seq(0,30,0.25))
+CHmax.cult=merge(CHmax.cult, parms)
+
+CHmax.cult$CHmax=6+(CHmax.cult$m-6)/(1+exp(-CHmax.cult$slp*(log(CHmax.cult$deltaTemp)-log(CHmax.cult$int))))
+
+
+
+
+
+CHstar.df=data.frame(t=seq(0,300,0.5))
+CHstar.df=merge(CHstar.df,bf)
+CHstar.df=merge(CHstar.df,cf)
+colnames(CHstar.df)=c("t","b","c")
+
+CHstar.df$CHstar=6+(31-6)/(1+exp(CHstar.df$b*(log(CHstar.df$t)-log(CHstar.df$c))))
+
+CHstar.df$grp=paste(CHstar.df$b, CHstar.df$c, sep=" ")
+
+CHstar.cult=data.frame(t=seq(0,300,0.5))
+CHstar.cult=merge(CHstar.cult, parms)
+
+CHstar.cult$CHstar=6+(CHstar.cult$m-6)/(1+exp(CHstar.cult$b*(log(CHstar.cult$t)-log(CHstar.cult$c))))
+
+
+CHstar.cult$kacc=(CHstar.cult$m-CHstar.cult$n)*(0.001+(((exp(CHstar.cult$b * (log(CHstar.cult$t) - log(CHstar.cult$c))))* ((-CHstar.cult$b) * (1/CHstar.cult$t)))/((1+exp(CHstar.cult$b * (log(CHstar.cult$t) - log(CHstar.cult$c))))^2)))
+
+
+
+
+
+Psideacc.df=data.frame(Chill=seq(0,150,1))
+Psideacc.df=merge(Psideacc.df,tlimbf)
+colnames(Psideacc.df)=c("Chill","b")
+
+Psideacc.df$Psi=1/(1+exp(-Psideacc.df$b*(log(Psideacc.df$Chill)-log(66))))
+
+Psideacc.df$grp=Psideacc.df$b
+
+Psideacc.cult=data.frame(Chill=seq(0,150,1))
+
+Psideacc.cult=merge(Psideacc.cult,parms)
+
+Psideacc.cult$Psi=1/(1+exp(-Psideacc.cult$tlimb*(log(Psideacc.cult$Chill)-log(66))))
+
+
+
+
+
+
+kdeacc.df=data.frame(Temp=seq(0,40,0.25))
+kdeacc.df=merge(kdeacc.df,kdeaccf)
+kdeacc.df=merge(kdeacc.df,af)
+colnames(kdeacc.df)=c("Temp","kdeaccmax","a")
+
+kdeacc.df$kdeacc=kdeacc.df$kdeaccmax* ((40-kdeacc.df$Temp)/(40-25))^kdeacc.df$a  *exp(kdeacc.df$a*( 1-((40-kdeacc.df$Temp)/(40-25))))
+
+kdeacc.df$grp=paste(kdeacc.df$a, kdeacc.df$kdeaccmax, sep=" ")
+
+kdeacc.cult=data.frame(Temp=seq(0,40,0.25))
+kdeacc.cult=merge(kdeacc.cult, parms)
+
+kdeacc.cult$kdeacc2=kdeacc.cult$kdeacc* ((40-kdeacc.cult$Temp)/(40-25))^kdeacc.cult$a  *exp(kdeacc.cult$a*( 1-((40-kdeacc.cult$Temp)/(40-25))))
+
+
+
+pal1=c("#C32966", "#234F9C", "#3B8441")
+
+p.deacc1=ggplot()+
+  geom_line(aes(x=kdeacc.df$Temp,y=kdeacc.df$kdeacc,group=kdeacc.df$grp), alpha=0.1,size=0.3)+
+  geom_line(aes(x=kdeacc.cult$Temp,y=kdeacc.cult$kdeacc2,color=kdeacc.cult$Cultivar), size=0.5)+
+  scale_x_continuous(limits=c(0,43), breaks=c(0,10,20,30,40),expand=c(0,0))+
+  scale_y_continuous(breaks=c(0,0.5,1,1.5,2), limits=c(0,2.45), expand=c(0,0))+
+  scale_color_manual(values=pal1)+
+  ylab("kdeacc") + xlab("Temperature (ºC)") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "none",
+        legend.key.size = unit(1, 'lines'))
+
+
+p.deacc2=ggplot()+
+  geom_line(aes(x=Psideacc.df$Chill,y=Psideacc.df$Psi,group=Psideacc.df$grp), alpha=0.3, size=0.3)+
+  geom_line(aes(x=Psideacc.cult$Chill,y=Psideacc.cult$Psi,color=Psideacc.cult$Cultivar),position=position_dodge(width=2),size=0.5)+
+  scale_x_continuous(limits=c(0,155), breaks=c(0,50,100,150,200,250,300),expand=c(0,0))+
+  scale_y_continuous(breaks=c(0,0.25,0.5,0.75,1), limits=c(0,1), expand=c(0,0))+
+  scale_color_manual(values=pal1, labels=c("CS","Co","Ri"))+
+  ylab("Psideacc") + xlab("Chilling accumulation (portions)") + labs(color="Cultivar") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = c(0.8,0.3),
+        legend.key.size = unit(0.5, 'lines'))
+
+  
+p.acc1=ggplot()+
+  geom_line(aes(x=CHstar.df$t,y=-CHstar.df$CHstar,group=CHstar.df$grp),  alpha=0.1, size=0.3)+
+  geom_line(aes(x=CHstar.cult$t,y=-CHstar.cult$CHstar,color=CHstar.cult$Cultivar),size=0.5)+
+  scale_x_continuous(limits=c(0,155), breaks=c(0,50,100,150,200,250,300),expand=c(0,0))+
+  scale_y_continuous(breaks=c(-30,-20,-10,0), limits=c(-32,2), expand=c(0,0))+
+  scale_color_manual(values=pal1)+
+  ylab("CHstar") + xlab("Artificial time (d)") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "none",
+        legend.key.size = unit(1, 'lines'))
+
+p.acc2=ggplot()+
+  geom_line(aes(x=CHstar.cult$t,y=CHstar.cult$kacc,color=CHstar.cult$Cultivar),size=0.5)+
+  scale_x_continuous(limits=c(0,155), breaks=c(0,50,100,150,200,250,300),expand=c(0,0))+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8), labels=c(0.0,-0.2,-0.4,-0.6,-0.8) , limits=c(0,0.8), expand=c(0,0))+
+  scale_color_manual(values=pal1)+
+  ylab("kacc") + xlab("Artificial time (d)") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "none",
+        legend.key.size = unit(1, 'lines'))
+
+
+p.acc3=ggplot()+
+  geom_line(aes(x=CHmax.df$deltaTemp,y=-CHmax.df$CHmax,group=CHmax.df$grp),  alpha=0.15, size=0.3)+
+  geom_line(aes(x=CHmax.cult$deltaTemp,y=-CHmax.cult$CHmax,color=CHmax.cult$Cultivar),size=0.5)+
+  scale_x_continuous(limits=c(0,35), breaks=c(0,10,20,30),expand=c(0,0))+
+  scale_y_continuous(breaks=c(-30,-20,-10,0), limits=c(-32,2), expand=c(0,0))+
+  scale_color_manual(values=pal1)+
+  ylab("CHmax") + xlab("deltaTemp") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "none",
+        legend.key.size = unit(1, 'lines'))
+
+p.acc4=ggplot()+
+  geom_line(aes(x=tlim.df$Chill,y=tlim.df$tlim,group=tlim.df$grp),alpha=0.05, size=0.3)+
+  geom_line(aes(x=tlim.cult$Chill,y=tlim.cult$tlim,color=tlim.cult$Cultivar), size=0.5)+
+  scale_x_continuous(limits=c(0,155), breaks=c(0,50,100,150),expand=c(0,0))+
+  scale_y_continuous(breaks=c(-6,-4,-2,0,2,4,6,8,10,12,14), limits=c(-6,16), expand=c(0,0))+
+  scale_color_manual(values=pal1)+
+  ylab("Tlim") + xlab("Chilling accumulation (portions)") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "none",
+        legend.key.size = unit(1, 'lines'))
+
+
+
+
+top=p.acc4+plot_spacer()+p.acc1+plot_spacer()+p.deacc1+plot_layout(ncol=5, widths=c(1,0.02,1,0.02,1))
+
+bot=p.acc3+plot_spacer()+p.acc2+plot_spacer()+p.deacc2+plot_layout(ncol=5, widths=c(1,0.02,1,0.02,1))
+
+top/plot_spacer()/bot+plot_layout(heights=c(1,0.03,1)) #Saved as 7.04x3.5
+
+
+```
+
+```{r}
+#### Figure 2 ####
+
+col1="#CD534CFF"
+col2="#0073C2FF"
+
+tlim.cult2=subset(tlim.cult, Cultivar %in% "Concord")
+
+tlim.cult2$tlim[tlim.cult2$Chill==76.7]-5.42
+
+p4=ggplot()+
+  geom_line(aes(x=tlim.cult2$Chill,y=tlim.cult2$tlim))+
+  geom_point(aes(y=tlim.cult2$tlim[tlim.cult2$Chill==40]-5.42, x=39.5),col=col1 ) + #31.75  0.226
+  geom_point(aes(y=tlim.cult2$tlim[tlim.cult2$Chill==40]-14.42, x=40.5), col=col2 ) + #18.81  0.662
+  geom_point(aes(y=tlim.cult2$tlim[tlim.cult2$Chill==76.7]-5.42, x=76.7),col=col1 ) + #31.75  0.226
+  scale_x_continuous(limits=c(0,155), breaks=c(0,50,100,150,200,250,300),expand=c(0,0))+
+  scale_y_continuous(breaks=c(-4,0,4,8,12), limits=c(-5,13), expand=c(0,0))+
+  ylab("Tlim") + xlab("Chilling accumulation (portions)") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "bottom",
+        legend.key.size = unit(1, 'lines'))
+
+
+
+CHmax.cult2=subset(CHmax.cult, Cultivar %in% "Concord")
+
+
+p1=ggplot()+
+  geom_line(aes(x=CHmax.cult2$deltaTemp,y=-CHmax.cult2$CHmax))+
+  geom_point(aes(x=c(5.42), y=c(-20)),col=col1 ) + #31.75  0.226
+  geom_point(aes(x=c(14.42), y=c(-30)), col=col2 ) + #18.81  0.662
+  scale_x_continuous(limits=c(0,30), breaks=c(0,10,20,30),expand=c(0,0))+
+  scale_y_continuous(breaks=c(-30,-20,-10,0), limits=c(-32,2), expand=c(0,0))+
+  ylab("CHmax") + xlab("DeltaTemp") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "bottom",
+        legend.key.size = unit(1, 'lines'))
+
+CHstar.df2=data.frame(t=seq(0,300,0.5))
+
+CHstar.df2$CHstar1=6+(30-6)/(1+exp(-2.1*(log(CHstar.df2$t)-log(24))))
+CHstar.df2$CHstar2=6+(20-6)/(1+exp(-2.1*(log(CHstar.df2$t)-log(24))))
+
+p2=ggplot()+
+  geom_hline(yintercept=-20, col=col1, lty=2, size=0.3)+
+  geom_hline(yintercept=-30, col=col2, lty=2, size=0.3)+
+  geom_line(aes(x=t, y=-CHstar1),data=CHstar.df2)+
+  geom_line(aes(x=t, y=-CHstar2),data=CHstar.df2)+
+  geom_point(aes(x=c(31.75), y=c(-15)), col=col1 ) + #31.75  0.226
+  geom_point(aes(x=c(18.81), y=c(-15)), col=col2 ) + #18.81  0.662
+  scale_x_continuous(limits=c(0,155), breaks=c(0,50,100,150,200,250,300),expand=c(0,0))+
+  scale_y_continuous(breaks=c(-30,-20,-10,0), limits=c(-32,2), expand=c(0,0))+
+  ylab("CH*") + xlab("Artificial time (d)") +
+  theme_bw(base_size=8)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "bottom",
+        legend.key.size = unit(1, 'lines'))
+
+CHstar.df2$kacc1=(30-6)*(0.001+(((exp(-2.1 * (log(CHstar.df2$t) - log(24))))* ((2.1) * (1/CHstar.df2$t)))/((1+exp(-2.1 * (log(CHstar.df2$t) - log(24))))^2)))
+
+CHstar.df2$kacc2=(20-6)*(0.001+(((exp(-2.1 * (log(CHstar.df2$t) - log(24))))* ((2.1) * (1/CHstar.df2$t)))/((1+exp(-2.1 * (log(CHstar.df2$t) - log(24))))^2)))
+
+
+p3=ggplot()+
+  geom_line(aes(x=t, y=kacc1),data=CHstar.df2)+
+  geom_line(aes(x=t, y=kacc2),data=CHstar.df2)+
+  geom_point(aes(x=c(31.75), y=c(0.226)), col=col1 ) + #31.75  0.226
+  geom_point(aes(x=c(18.81), y=c(0.652)), col=col2 ) + #18.81  0.662
+  scale_x_continuous(limits=c(0,155), breaks=c(0,50,100,150,200,250,300),expand=c(0,0))+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6), labels=c(0.0,-0.2,-0.4,-0.6), limits=c(0,0.7), expand=c(0,0))+
+  ylab("kacc") + xlab("Artificial time (d)") +
+  theme_bw(base_size=9)+
+  theme(text= element_text(color="black", size=8),
+        axis.text = element_text(size=8,color="black"),
+        axis.text.x = element_text(size=8,angle = 0, hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size=0.2, color="black"),
+        axis.ticks = element_line(size=0.2,color="black"),
+        axis.ticks.length = unit(0.15, 'lines'),
+        panel.border = element_blank(),
+        legend.position = "bottom",
+        legend.key.size = unit(1, 'lines'))
+
+
+
+p4/p1/p2/p3 # save as 3.54 x 5
+
+  
+```
+
+```{r}
+#### Figures 3 and 4 ####
+
+preds$CH[preds$CH>(-2)]=-2
+
+csvalidation=factor(c("2015-2016","2019-2020"))
+cscalibration=factor(c("2016-2017", "2017-2018", "2018-2019", "2020-2021"))
+
+
+covalidation=factor(c("2014-2015","2018-2019","2020-2021"))
+cocalibration=factor(c("2012-2013", "2013-2014", "2016-2017", "2017-2018", "2019-2020"))
+
+
+rivalidation=factor(c("2013-2014","2015-2016","2016-2017"))
+ricalibration=factor(c("2012-2013", "2014-2015", "2017-2018", "2018-2019", "2019-2020", "2020-2021"))
+
+
+datfig=dat3
+
+datfig$Date=as.POSIXct(format(as.POSIXct(datfig$Date, format="%Y-%m-%d"), format="%Y-%m-%d"))
+
+predsfig=preds
+datfig=merge(datfig,predsfig[c(1,2,11,17)])
+
+predsfergfig=predsferg
+predsfergfig$CHferg=predsfergfig$CH
+
+datfig=merge(datfig,predsfergfig[c(1,2,18,19)])
+
+
+
+valCS=subset(subset(datfig, Cultivar %in% "Cabernet_Sauvignon"), Dataset %in% csvalidation)
+
+rmseferg=sqrt(sum((valCS$LTE-valCS$CHferg)^2)/nrow(valCS))
+biasferg=sum((valCS$LTE-valCS$CHferg))/nrow(valCS)
+corferg=cor(valCS$LTE,valCS$CHferg)
+
+rmse=sqrt(sum((valCS$LTE-valCS$CH)^2)/nrow(valCS))
+bias=sum((valCS$LTE-valCS$CH))/nrow(valCS)
+cor=cor(valCS$LTE,valCS$CH)
+
+rmseferg
+biasferg
+corferg
+
+rmse
+bias
+cor
+
+
+valCo=subset(subset(datfig, Cultivar %in% "Concord"), Dataset %in% covalidation)
+
+
+rmseferg=sqrt(sum((valCo$LTE-valCo$CHferg)^2)/nrow(valCo))
+biasferg=sum((valCo$LTE-valCo$CHferg))/nrow(valCo)
+corferg=cor(valCo$LTE,valCo$CHferg)
+
+rmse=sqrt(sum((valCo$LTE-valCo$CH)^2)/nrow(valCo))
+bias=sum((valCo$LTE-valCo$CH))/nrow(valCo)
+cor=cor(valCo$LTE,valCo$CH)
+
+rmseferg
+biasferg
+corferg
+
+rmse
+bias
+cor
+
+valRi=subset(subset(datfig, Cultivar %in% "Riesling"), Dataset %in% rivalidation)
+
+rmseferg=sqrt(sum((valRi$LTE-valRi$CHferg)^2)/nrow(valRi))
+biasferg=sum((valRi$LTE-valRi$CHferg))/nrow(valRi)
+corferg=cor(valRi$LTE,valRi$CHferg)
+
+rmse=sqrt(sum((valRi$LTE-valRi$CH)^2)/nrow(valRi))
+bias=sum((valRi$LTE-valRi$CH))/nrow(valRi)
+cor=cor(valRi$LTE,valRi$CH)
+
+rmseferg
+biasferg
+corferg
+
+rmse
+bias
+cor
+
+
+datfigval=rbind(rbind(valCS,valCo),valRi)
+
+datfigval$Cultivar=relevel(datfigval$Cultivar, "Concord")
+
+pal2=c( "#234F9C","#C32966", "#3B8441")
+
+
+p.a=ggplot(data=datfigval)+
+  geom_abline(slope=1,intercept = 0, lty=2, size=0.3)+
+  geom_point(data=datfigval, aes(x=LTE,y=CH, fill=Cultivar),shape=21,size=1.8,stroke=0.2,color="white")+
+  geom_smooth(data=datfigval, aes(x=LTE,y=CH), method="lm",formula='y~x' ,fullrange=T, se=F, col="black", size=0.3)+
+  scale_y_continuous(limits=c(-38,-2), breaks=c(-30,-20,-10))+
+  scale_x_continuous(limits=c(-38,-2), breaks=c(-30,-20,-10))+
+  scale_color_manual(values=pal2)+
+  scale_fill_manual(values=pal2)+
+  theme_bw(base_size=8) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=8, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5),
+        aspect.ratio = 1)+
+  facet_wrap(.~Cultivar, ncol=1)
+
+
+p.b=ggplot(data=datfigval)+
+  geom_abline(slope=1,intercept = 0, lty=2, size=0.3)+
+  geom_point(data=datfigval, aes(x=LTE,y=CHferg, fill=Cultivar),shape=21,size=1.8,stroke=0.2,color="white")+
+  geom_smooth(data=datfigval, aes(x=LTE,y=CHferg), method="lm",formula='y~x' ,fullrange=T, se=F, col="black", size=0.3)+
+  scale_y_continuous(limits=c(-38,-2), breaks=c(-30,-20,-10))+
+  scale_x_continuous(limits=c(-38,-2), breaks=c(-30,-20,-10))+
+  scale_color_manual(values=pal2)+
+  scale_fill_manual(values=pal2)+
+  theme_bw(base_size=8) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=8, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5),
+        aspect.ratio = 1)+
+  facet_wrap(.~Cultivar,ncol=1)
+
+
+p.a+p.b
+
+
+datfig2=subset(dat3, Dataset %in% "2018-2019")
+datpredsfig=subset(preds, Dataset %in% "2018-2019")
+datfergfig=subset(predsferg, Dataset %in% "2018-2019")
+wdatfig=subset(wdat2c, Dataset %in% "2018-2019")
+
+Cultivars.df=data.frame(Cultivars=c("Concord","Cabernet_Sauvignon","Riesling"))
+wdatfig2=merge(wdatfig,Cultivars.df)
+
+datfig2$Cultivar=relevel(datfig2$Cultivar, "Concord")
+
+
+
+ggplot()+
+  geom_abline(slope=0,intercept=0, size=0.2, col="black")+
+  geom_point(aes(x=Date,y=LTE, fill=Cultivar),shape=21,size=1.8,stroke=0.2,color="white", data=datfig2)+
+  geom_ribbon(aes(x=Date,ymax=MaxC,ymin=MinC,group=Dataset),lty=1, color="darkgrey", lwd=0.1, alpha=0.3, data=wdatfig)+
+  geom_line(aes(x=Date,y=CH, col=Cultivar),data=datpredsfig, size=0.5)+
+  geom_line(aes(x=Date,y=CH, col=Cultivar),lty=2, data=datfergfig, size=0.5)+
+  scale_y_continuous(limits=c(-32,NA),breaks=c(-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30),
+                     labels=c(-30,"",-20,"",-10,"",0,"",10,"",20,"",30), expand=c(0,0))+
+  scale_x_datetime(date_labels= "%b", date_breaks = "1 month", date_minor_breaks = "1 month") +
+  xlab("")+
+  scale_color_manual(values=pal2)+
+  scale_fill_manual(values=pal2)+
+  facet_grid(.~Cultivar)+
+  theme_bw(base_size=8) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=8, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(color=c(NA,"black"), angle=0,vjust=0, hjust=0.5))
+```
+
+
+```{r}
+#### Supplementary Figures ####
+
+datfigCo=subset(dat3, Cultivar %in% "Concord")
+datpredsfigCo=subset(preds, Cultivar %in% "Concord")
+datfergfigCo=subset(predsferg, Cultivar %in% "Concord")
+
+
+ggplot()+ #export size 7.09 x 8
+  geom_abline(slope=0,intercept=0, size=0.2, col="black")+
+  geom_point(aes(x=Date,y=LTE, fill=Cultivar),shape=21,size=1.8,stroke=0.2,color="white", data=datfigCo)+
+  geom_ribbon(aes(x=Date,ymax=MaxC,ymin=MinC,group=Dataset),lty=1, color="darkgrey", lwd=0.1, alpha=0.3, data=wdat2c)+
+  geom_line(aes(x=Date,y=CH, col=Cultivar),data=datpredsfigCo, size=0.5)+
+  geom_line(aes(x=Date,y=CH, col=Cultivar),lty=2, data=datfergfigCo, size=0.5)+
+  scale_y_continuous(limits=c(-32,NA),breaks=c(-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30),
+                     labels=c(-30,"",-20,"",-10,"",0,"",10,"",20,"",30), expand=c(0,0))+
+  scale_x_datetime(date_labels= "%b", date_breaks = "1 month", date_minor_breaks = "1 month") +
+  xlab("")+
+  scale_color_manual(values="#234F9C")+
+  scale_fill_manual(values="#234F9C")+
+  facet_wrap(.~Dataset, scales="free_x")+
+  theme_bw(base_size=8) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=8, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(color=c(NA,"black"), angle=0,vjust=0, hjust=0.5))
+  
+
+
+
+datfigCS=subset(dat3, Cultivar %in% "Cabernet_Sauvignon")
+datpredsfigCS=subset(preds, Cultivar %in% "Cabernet_Sauvignon")
+datfergfigCS=subset(predsferg, Cultivar %in% "Cabernet_Sauvignon")
+
+
+ggplot()+
+  geom_abline(slope=0,intercept=0, size=0.2, col="black")+
+  geom_point(aes(x=Date,y=LTE, fill=Cultivar),shape=21,size=1.8,stroke=0.2,color="white", data=datfigCS)+
+  geom_ribbon(aes(x=Date,ymax=MaxC,ymin=MinC,group=Dataset),lty=1, color="darkgrey", lwd=0.1, alpha=0.3, data=wdat2c)+
+  geom_line(aes(x=Date,y=CH, col=Cultivar),data=datpredsfigCS, size=0.5)+
+  geom_line(aes(x=Date,y=CH, col=Cultivar),lty=2, data=datfergfigCS, size=0.5)+
+  scale_y_continuous(limits=c(-32,NA),breaks=c(-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30),
+                     labels=c(-30,"",-20,"",-10,"",0,"",10,"",20,"",30), expand=c(0,0))+
+  scale_x_datetime(date_labels= "%b", date_breaks = "1 month", date_minor_breaks = "1 month") +
+  xlab("")+
+  scale_color_manual(values="#C32966")+
+  scale_fill_manual(values="#C32966")+
+  facet_wrap(.~Dataset, scales="free_x")+
+  theme_bw(base_size=8) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=8, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(color=c(NA,"black"), angle=0,vjust=0, hjust=0.5))
+  
+
+
+
+datfigRi=subset(dat3, Cultivar %in% "Riesling")
+datpredsfigRi=subset(preds, Cultivar %in% "Riesling")
+datfergfigRi=subset(predsferg, Cultivar %in% "Riesling")
+
+
+ggplot()+
+  geom_abline(slope=0,intercept=0, size=0.2, col="black")+
+  geom_point(aes(x=Date,y=LTE, fill=Cultivar),shape=21,size=1.8,stroke=0.2,color="white", data=datfigRi)+
+  geom_ribbon(aes(x=Date,ymax=MaxC,ymin=MinC,group=Dataset),lty=1, color="darkgrey", lwd=0.1, alpha=0.3, data=wdat2c)+
+  geom_line(aes(x=Date,y=CH, col=Cultivar),data=datpredsfigRi, size=0.5)+
+  geom_line(aes(x=Date,y=CH, col=Cultivar),lty=2, data=datfergfigRi, size=0.5)+
+  scale_y_continuous(limits=c(-32,NA),breaks=c(-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30),
+                     labels=c(-30,"",-20,"",-10,"",0,"",10,"",20,"",30), expand=c(0,0))+
+  scale_x_datetime(date_labels= "%b", date_breaks = "1 month", date_minor_breaks = "1 month") +
+  xlab("")+
+  scale_color_manual(values="#3B8441")+
+  scale_fill_manual(values="#3B8441")+
+  facet_wrap(.~Dataset, scales="free_x")+
+  theme_bw(base_size=8) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=8, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(color=c(NA,"black"), angle=0,vjust=0, hjust=0.5))
+
+```
+
+

@@ -1,0 +1,790 @@
+---
+title: "Multiple cultivars Geneva"
+author: "Al Kovaleski"
+date: "4/3/2020"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+library(lubridate)
+library(viridis)
+library(ggplot2)
+library(chillR)
+
+options(max.print=9000)
+dat=read.csv("DataCH_allCVs_allPIs.csv")
+
+dat$Date=as.Date(dat$Date, format="%m/%d/%y")
+
+
+daysearly=0
+
+dat$Dataset=paste((as.numeric(year(dat$Date))-1),as.numeric(year(dat$Date)),sep="-" )
+
+dat$Dataset[month(dat$Date)>7]=paste((as.numeric(year(dat$Date[month(dat$Date)>7]))),(as.numeric(year(dat$Date[month(dat$Date)>7]))+1),sep="-" )
+
+
+dat$Cultivar=as.factor(dat$Cultivar)
+dat$Dataset=as.factor(dat$Dataset)
+dat$Date=as.POSIXct(dat$Date)+64800
+
+levels(dat$Cultivar)
+
+datCon=subset(dat, Cultivar %in% "Cabernet_Sauvignon")
+datCon$Dataset=factor(datCon$Dataset)
+
+levels(datCon$Dataset) #6 levels = 4 calibration, 2 validation
+
+set.seed(0706) #June 7th 2022
+calibration=factor(sample(levels(factor(datCon$Dataset)),4, replace=F))
+
+calibration
+
+calibration=factor(c("2016-2017", "2017-2018", "2018-2019", "2020-2021"))
+
+validation=factor(c("2015-2016","2019-2020"))
+
+
+datConcal=subset(datCon, Dataset %in% calibration)
+datConcalmean=aggregate(LTE~Cultivar+Date+Dataset,datConcal,mean)
+
+#datConcalmeanx=subset(datConcalmean, Dataset %in% "2019-2020")
+
+#datConcalmeanx=subset(datConcalmeanx, month(datConcalmeanx$Date)>7)
+
+
+#datConcalmean=subset(datConcalmean, Dataset %in% calibrationplus)
+#datConcalmean=rbind(datConcalmean,datConcalmeanx)
+
+
+
+
+
+
+wdat=read.csv("DataWeather.csv")
+summary(wdat)
+
+wdat$DateTime=as.POSIXct(as.character(wdat$DateTime),format="%m/%d/%y %H:%M")
+wdat$Dataset=paste((as.numeric(year(wdat$Date))-1),as.numeric(year(wdat$Date)),sep="-" )
+
+wdat$Dataset[month(wdat$Date)>7]=paste((as.numeric(year(wdat$Date[month(wdat$Date)>7]))),(as.numeric(year(wdat$Date[month(wdat$Date)>7]))+1),sep="-" )
+wdat$Portions[is.na(wdat$Portions)] = 0
+
+wdat2=NULL
+
+for (i in levels(factor(wdat$Dataset))) {
+  
+  wdatsub=subset(wdat, Dataset %in% i)
+  
+  wdatsub$Portions=Dynamic_Model(wdatsub$TempC)
+  
+  wdat2=rbind(wdat2,wdatsub)
+  
+  
+  
+}
+
+
+
+
+wdatcal=subset(wdat2, Dataset %in% calibration)
+
+
+
+
+wdatcal$Date=as.POSIXct(format(wdatcal$Date, format="%Y-%m-%d"))
+
+datConcalmean$Date=as.POSIXct(format(datConcalmean$Date, format="%Y-%m-%d"))
+
+wdatcald=wdatcal[c(1,10,11,12,15)]
+
+wdatcalc=aggregate(.~Date,wdatcald,mean)
+wdatcalc$Dataset=paste((as.numeric(year(wdatcalc$Date))-1),as.numeric(year(wdatcalc$Date)),sep="-" )
+
+wdatcalc$Dataset[month(wdatcalc$Date)>7]=paste((as.numeric(year(wdatcalc$Date[month(wdatcalc$Date)>7]))),(as.numeric(year(wdatcalc$Date[month(wdatcalc$Date)>7]))+1),sep="-" )
+
+
+
+wdatcalc2=aggregate(.~Date,wdatcald,max)
+wdatcalc3=aggregate(.~Date,wdatcald,min)
+
+wdatcalc2=wdatcalc2[c(1,3)]
+wdatcalc3=wdatcalc3[c(1,3)]
+
+colnames(wdatcalc2)=c("Date","MaxC")
+colnames(wdatcalc3)=c("Date","MinC")
+
+
+wdatcalc4=merge(wdatcalc,wdatcalc2)
+wdatcalc4=merge(wdatcalc4,wdatcalc3)
+
+
+
+#### For loops for model optimization #### 
+
+
+m=abs(floor(mean(sort(datConcalmean$LTE, decreasing=F)[1:15])))
+
+
+
+tlimlf =  data.frame(seq(-6,0,2))  
+tlimhf =  data.frame(seq(6,14,2))  
+tlimbf =  data.frame(seq(6,11,1))
+tlimef =  data.frame(c(66))
+
+nf = data.frame(c(6))  
+bf = data.frame(seq(-2.3,-1.7,0.1))  
+cf =  data.frame(seq(12,24,2))
+kdeaccf =  data.frame(seq(1.8,1.3,-0.1)) 
+af =  data.frame(c(3.5,4,4.5,5))
+
+
+mf =  data.frame(m)
+slpf=  data.frame(seq(2,7,1))
+intf = data.frame(seq(2,5,1))
+
+
+
+
+
+testparm=merge(tlimlf,tlimhf)
+testparm=merge(testparm,tlimbf)
+testparm=merge(testparm,tlimef)
+
+testparm=merge(testparm,mf)
+testparm=merge(testparm,nf)
+testparm=merge(testparm,bf)
+testparm=merge(testparm,cf)
+testparm=merge(testparm,kdeaccf)
+testparm=merge(testparm,af)
+testparm=merge(testparm,slpf)
+testparm=merge(testparm,intf)
+
+
+
+colnames(testparm)=c("tliml","tlimh","tlimb","tlime","m","n","b","c","kdeacc","a","slp","int")
+
+
+modoptim5=testparm
+modoptim5$rmse=99
+modoptim5$bias=99
+modoptim5$rmsey=99
+modoptim5$rmseacc=99
+
+modoptim6=modoptim5
+
+
+rownames(modoptim5)=NULL
+
+
+for (i in 1:nrow(modoptim5)) {
+  
+  print(i)
+  
+  tliml=modoptim5$tliml[i]
+  tlimh=modoptim5$tlimh[i]
+  tlimb=modoptim5$tlimb[i]
+  tlime=modoptim5$tlime[i]
+  m=modoptim5$m[i]
+  n=modoptim5$n[i]
+  b=modoptim5$b[i]
+  c=modoptim5$c[i]
+  kdeacc=modoptim5$kdeacc[i]
+  a=modoptim5$a[i]
+  Tmax=40
+  Topt=25
+  slp=modoptim5$slp[i]
+  int=modoptim5$int[i]
+  
+  
+  wdatcalc4$kdeacc=(0.00*wdatcalc4$MaxC + 0.00*wdatcalc4$MinC)
+  
+  
+
+  wdatcalc4$kdeacc[wdatcalc4$MaxC>0 & wdatcalc4$MinC>0]= ((kdeacc*(((Tmax-wdatcalc4$MaxC[wdatcalc4$MaxC>0 & wdatcalc4$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdatcalc4$MaxC[wdatcalc4$MaxC>0 & wdatcalc4$MinC>0])/(Tmax-Topt)))))+(kdeacc*(((Tmax-wdatcalc4$MinC[wdatcalc4$MaxC>0 & wdatcalc4$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdatcalc4$MinC[wdatcalc4$MaxC>0 & wdatcalc4$MinC>0])/(Tmax-Topt))))))/2
+    
+  
+  wdatcalc4$kdeacc[wdatcalc4$MaxC>0 & wdatcalc4$MinC<=0]=(kdeacc*(((Tmax-wdatcalc4$MaxC[wdatcalc4$MaxC>0 & wdatcalc4$MinC<=0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdatcalc4$MaxC[wdatcalc4$MaxC>0 & wdatcalc4$MinC<=0])/(Tmax-Topt)))))/2
+  
+  
+  
+  
+  wdatcalc4$kdeacc[wdatcalc4$kdeacc<0]=0
+  
+  wdatcalc4$Deaccpot=1/(1+exp((-tlimb)*(log(wdatcalc4$Portions)- log(tlime))))
+
+
+  wdatcalc4$deacc=wdatcalc4$Deaccpot*(wdatcalc4$kdeacc)
+
+
+
+  wdatcalc4$CH=-n
+  
+  
+  Time=seq(0.1,500,0.1)
+
+  Resp=1/(1+exp(b*(log(Time)-log(c))))
+  
+  
+  test=data.frame(Time, Resp)
+  
+  
+  wdatcalc4$CHmax=0
+  
+  wdatcalc4$sumdeacc=0
+  
+  wdatcalb=NULL
+  
+  
+  for (y in levels(factor(wdatcalc$Dataset))) {
+    
+    wdatcalsubb=subset(wdatcalc4, Dataset %in% y)
+    wdatcalsubb$month=month(wdatcalsubb$Date)
+    wdatcalsub=subset(wdatcalsubb, month %in% c(9,10,11,12,1,2,3,4,5))
+    wdatcalsub$acc=0
+    
+    for (t in 2:nrow(wdatcalsub)) {
+    
+    wdatcalsub$sumdeacc[t]=wdatcalsub$sumdeacc[t-1]+wdatcalsub$kdeacc[t]*wdatcalsub$Deaccpot[t]
+    
+    
+    }
+    
+    
+    rownames(wdatcalsub)=NULL
+    
+    wdatcalsub$tlim=tliml+((tlimh-tliml)/(1+exp(tlimb*(log(wdatcalsub$Portions)-log(tlime)) )) )
+    
+    
+  
+  for (u in (2):nrow(wdatcalsub)) {
+    
+    if (wdatcalsub$MinC[u]<wdatcalsub$tlim[u]) {
+      
+      Tmin=wdatcalsub$MinC[u]
+      Tlimmin=wdatcalsub$tlim[u]
+        
+      CHmax= -(n+(m-n)/(1+exp(-slp*(log(-Tmin+Tlimmin)-log(int)))))
+      
+      lev=wdatcalsub$CH[u-1]/CHmax
+        
+        if (lev>1) {
+          lev=1
+          CHmax=CHmax
+        }
+        
+        
+        
+        
+        
+    } else {
+      lev=1
+      CHmax=-n
+      }
+    
+    
+    j=min(which(abs(lev-test$Resp)==min(abs(lev-test$Resp))))
+  
+    ti=test$Time[j]
+        
+    u2=u-1
+  
+    
+    wdatcalsub$acc[u]=(CHmax+n)*(0.001+(((exp(b * (log(ti) - log(c))))* ((-b) * (1/ti)))/((1+exp(b * (log(ti) - log(c))))^2)))
+  
+    wdatcalsub$CH[u]=wdatcalsub$CH[u2]+wdatcalsub$acc[u]+wdatcalsub$deacc[u]
+    
+        
+    }
+  
+    
+    wdatcalb=rbind(wdatcalb, wdatcalsub)
+  
+    
+  }
+  
+  
+  datConcalmean$DateTime=datConcalmean$Date
+  
+  datConcalmeanb=merge(datConcalmean, wdatcalb[c(1,12)])
+  
+  datConcalmeanb$sqer=(datConcalmeanb$LTE-datConcalmeanb$CH)^2
+  
+  datConcalmeanc=aggregate(sqer~Dataset,datConcalmeanb,sum)
+  datConcalmeand=aggregate(sqer~Dataset,datConcalmeanb,length)
+  colnames(datConcalmeand)=c("Dataset","len")
+  
+  datConcalmeanc=merge(datConcalmeanc,datConcalmeand)
+  datConcalmeanc$rmse=sqrt(datConcalmeanc$sqer/datConcalmeanc$len)
+  
+  rmseacc=sqrt(mean((datConcalmeanb$LTE[month(datConcalmeanb$Date)>7 & month(datConcalmeanb$Date)<12]-datConcalmeanb$CH[month(datConcalmeanb$Date)>7 & month(datConcalmeanb$Date)<12])^2))
+  
+  rmsey=mean(datConcalmeanc$rmse)
+  
+  
+  rmse=sqrt(mean((datConcalmeanb$LTE-datConcalmeanb$CH)^2))
+  
+  
+  bias=mean((datConcalmeanb$CH-datConcalmeanb$LTE))
+  
+  modoptim5$rmse[i]=rmse
+  modoptim5$bias[i]=bias
+  modoptim5$rmsey[i]=rmsey
+  modoptim5$rmseacc[i]=rmseacc
+  
+  
+
+  
+}
+
+
+
+
+wdatcalb$Dataset=as.factor(wdatcalb$Dataset)
+
+
+
+modoptim8=(modoptim5)
+
+
+  
+#### Applying best RMSE to validation dataset ####
+
+
+datConval=subset(datCon, Dataset %in% validation)
+datConvalmean=aggregate(LTE~Cultivar+Date+Dataset,datConval,mean)
+
+
+wdatval=subset(wdat2, Dataset %in% validation)
+
+
+
+wdatval$Date=as.POSIXct(format(wdatval$Date, format="%Y-%m-%d"))
+
+datConvalmean$Date=as.POSIXct(format(datConvalmean$Date, format="%Y-%m-%d"))
+
+wdatvald=wdatval[c(1,10,11,12,15)]
+
+wdatvalc=aggregate(.~Date,wdatvald,mean)
+wdatvalc$Dataset=paste((as.numeric(year(wdatvalc$Date))-1),as.numeric(year(wdatvalc$Date)),sep="-" )
+
+wdatvalc$Dataset[month(wdatvalc$Date)>7]=paste((as.numeric(year(wdatvalc$Date[month(wdatvalc$Date)>7]))),(as.numeric(year(wdatvalc$Date[month(wdatvalc$Date)>7]))+1),sep="-" )
+
+
+
+wdatvalc2=aggregate(.~Date,wdatvald,max)
+wdatvalc3=aggregate(.~Date,wdatvald,min)
+
+wdatvalc2=wdatvalc2[c(1,3)]
+wdatvalc3=wdatvalc3[c(1,3)]
+
+colnames(wdatvalc2)=c("Date","MaxC")
+colnames(wdatvalc3)=c("Date","MinC")
+
+
+wdatvalc4=merge(wdatvalc,wdatvalc2)
+wdatvalc4=merge(wdatvalc4,wdatvalc3)
+
+
+  
+  
+
+
+i=which.min(modoptim8$rmse)
+
+
+
+print(i)
+
+tliml=modoptim8$tliml[i]
+tlimh=modoptim8$tlimh[i]
+tlimb=modoptim8$tlimb[i]
+tlime=modoptim8$tlime[i]
+m=modoptim8$m[i]
+n=modoptim8$n[i]
+b=modoptim8$b[i]
+c=modoptim8$c[i]
+kdeacc=modoptim8$kdeacc[i]
+a=modoptim8$a[i]
+Tmax=40
+Topt=25
+slp=modoptim8$slp[i]
+int=modoptim8$int[i]
+
+
+wdatvalc4$kdeacc=(0.00*wdatvalc4$MaxC + 0.00*wdatvalc4$MinC)
+
+
+
+wdatvalc4$kdeacc[wdatvalc4$MaxC>0 & wdatvalc4$MinC>0]= ((kdeacc*(((Tmax-wdatvalc4$MaxC[wdatvalc4$MaxC>0 & wdatvalc4$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdatvalc4$MaxC[wdatvalc4$MaxC>0 & wdatvalc4$MinC>0])/(Tmax-Topt)))))+(kdeacc*(((Tmax-wdatvalc4$MinC[wdatvalc4$MaxC>0 & wdatvalc4$MinC>0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdatvalc4$MinC[wdatvalc4$MaxC>0 & wdatvalc4$MinC>0])/(Tmax-Topt))))))/2
+
+
+wdatvalc4$kdeacc[wdatvalc4$MaxC>0 & wdatvalc4$MinC<=0]=(kdeacc*(((Tmax-wdatvalc4$MaxC[wdatvalc4$MaxC>0 & wdatvalc4$MinC<=0])/(Tmax-Topt))^a) *exp(a*( 1-((Tmax-wdatvalc4$MaxC[wdatvalc4$MaxC>0 & wdatvalc4$MinC<=0])/(Tmax-Topt)))))/2
+
+
+
+
+wdatvalc4$kdeacc[wdatvalc4$kdeacc<0]=0
+
+wdatvalc4$Deaccpot=1/(1+exp((-tlimb)*(log(wdatvalc4$Portions)- log(tlime))))
+
+
+wdatvalc4$deacc=wdatvalc4$Deaccpot*(wdatvalc4$kdeacc)
+
+
+
+wdatvalc4$CH=-n
+
+
+Time=seq(0.1,500,0.1)
+
+Resp=1/(1+exp(b*(log(Time)-log(c))))
+
+
+test=data.frame(Time, Resp)
+
+
+wdatvalc4$CHmax=0
+
+wdatvalc4$sumdeacc=0
+
+wdatvalb=NULL
+
+
+for (y in levels(factor(wdatvalc$Dataset))) {
+
+wdatvalsubb=subset(wdatvalc4, Dataset %in% y)
+wdatvalsubb$month=month(wdatvalsubb$Date)
+wdatvalsub=subset(wdatvalsubb, month %in% c(9,10,11,12,1,2,3,4,5))
+wdatvalsub$acc=0
+
+for (t in 2:nrow(wdatvalsub)) {
+
+wdatvalsub$sumdeacc[t]=wdatvalsub$sumdeacc[t-1]+wdatvalsub$kdeacc[t]*wdatvalsub$Deaccpot[t]
+
+
+}
+
+
+rownames(wdatvalsub)=NULL
+
+wdatvalsub$tlim=tliml+((tlimh-tliml)/(1+exp(tlimb*(log(wdatvalsub$Portions)-log(tlime)) )) )
+
+
+
+for (u in (2):nrow(wdatvalsub)) {
+
+if (wdatvalsub$MinC[u]<wdatvalsub$tlim[u]) {
+
+Tmin=wdatvalsub$MinC[u]
+Tlimmin=wdatvalsub$tlim[u]
+
+CHmax= -(n+(m-n)/(1+exp(-slp*(log(-Tmin+Tlimmin)-log(int)))))
+
+lev=wdatvalsub$CH[u-1]/CHmax
+
+if (lev>1) {
+lev=1
+CHmax=CHmax
+}
+
+
+
+
+
+} else {
+lev=1
+CHmax=-n
+}
+
+
+j=min(which(abs(lev-test$Resp)==min(abs(lev-test$Resp))))
+
+ti=test$Time[j]
+
+u2=u-1
+
+
+wdatvalsub$acc[u]=(CHmax+n)*(0.001+(((exp(b * (log(ti) - log(c))))* ((-b) * (1/ti)))/((1+exp(b * (log(ti) - log(c))))^2)))
+
+wdatvalsub$CH[u]=wdatvalsub$CH[u2]+wdatvalsub$acc[u]+wdatvalsub$deacc[u]
+
+
+}
+
+
+wdatvalb=rbind(wdatvalb, wdatvalsub)
+
+
+}
+
+
+datConvalmean$DateTime=datConvalmean$Date
+
+datConvalmeanb=merge(datConvalmean, wdatvalb[c(1,12)])
+
+datConvalmeanb$sqer=(datConvalmeanb$LTE-datConvalmeanb$CH)^2
+
+datConvalmeanc=aggregate(sqer~Dataset,datConvalmeanb,sum)
+datConvalmeand=aggregate(sqer~Dataset,datConvalmeanb,length)
+colnames(datConvalmeand)=c("Dataset","len")
+
+datConvalmeanc=merge(datConvalmeanc,datConvalmeand)
+datConvalmeanc$rmse=sqrt(datConvalmeanc$sqer/datConvalmeanc$len)
+
+rmseacc=sqrt(mean((datConvalmeanb$LTE[month(datConvalmeanb$Date)>7 & month(datConvalmeanb$Date)<12]-datConvalmeanb$CH[month(datConvalmeanb$Date)>7 & month(datConvalmeanb$Date)<12])^2))
+
+rmsey=mean(datConvalmeanc$rmse)
+
+
+rmse=sqrt(mean((datConvalmeanb$LTE-datConvalmeanb$CH)^2))
+
+
+bias=mean((datConvalmeanb$LTE-datConvalmeanb$CH))
+
+
+
+ggplot()+
+  geom_line(data=wdatvalb,aes(Date,MaxC), col="red3")+
+  geom_line(data=wdatvalb,aes(Date,MinC), col="lightblue4")+
+  geom_line(data=wdatvalb,aes(Date,tlim))+
+  #geom_abline(slope = 0,intercept=-29.5)+
+  geom_segment(data=datConvalmeanb,aes(x=Date,xend=Date,y=CH,yend=LTE, col=(CH-LTE)))+
+  geom_point(data=datConvalmeanb, aes(Date,LTE),shape=21, fill="white")+
+  geom_point(data=datConval, aes(Date,LTE, fill=PI),shape=21, stat="summary")+
+  geom_line(data=wdatvalb,aes(x=Date,y=CH))+
+  scale_y_continuous(limits=c(NA,35),breaks=c(-30,-25,-20,-15,-10,-5,0,10,20,30))+
+  ylab("Temperature (ºC)")+
+  scale_color_gradient2(midpoint=0, low="dodgerblue4",
+                     high="red", space ="Lab" )+
+  facet_grid(~Dataset, scales="free_x")+
+  theme_bw(base_size=11) +
+  theme(legend.position = "right",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=11, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+
+ggplot()+
+  geom_point(data=datConvalmeanb, aes(x=LTE,y=CH))+
+  geom_abline(slope=1,intercept = 0, lty=2)+
+  geom_smooth(data=datConvalmeanb, aes(x=LTE,y=CH), method="lm")+
+  scale_y_continuous(limits=c(-35,-5), breaks=c(-30,-25,-20,-15,-10,-5))+
+  scale_x_continuous(limits=c(-35,-5), breaks=c(-30,-25,-20,-15,-10,-5))+
+  theme_bw(base_size=11) +
+  theme(legend.position = "right",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=11, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+summary(lm(LTE~CH,data=datConvalmeanb))
+
+
+
+#### Adding WAUS.2 (Ferguson Model) ####
+
+endoTth=13
+ecoTth=5
+
+kaendo=0.12
+kdendo=0.08
+kaeco=0.1
+kdeco=0.1
+
+Hcinitial=-10.3
+Hcmax=-25.1
+Hcmin=-1.2
+
+Theta=7
+boundEDB=-700
+
+wdatvalc4ferg=wdatvalc4[1:8]
+wdatvalc4ferg$Tmean=(wdatvalc4ferg$MaxC+wdatvalc4ferg$MinC)/2
+
+wdat5=NULL
+
+
+for (j in levels(factor(wdatvalc4ferg$Dataset))) {
+  
+  wdat4=subset(wdatvalc4ferg, Dataset %in% j)
+  
+  rownames(wdat4)=NULL
+
+  modelstart=as.numeric(rownames(wdat4)[wdat4$Tmean<endoTth][1])
+  
+  if (modelstart==1) {modelstart=2}
+  
+  
+  wdat4$Tthendo=wdat4$Tmean-endoTth
+  
+  wdat4$DDcendo=0
+  wdat4$DDcendo[wdat4$Tthendo<0]=wdat4$Tthendo[wdat4$Tthendo<0]
+  
+  wdat4$DDhendo=0
+  wdat4$DDhendo[wdat4$Tthendo>0]=wdat4$Tthendo[wdat4$Tthendo>0]
+  
+  wdat4$EDB=0
+  wdat4$EDBday=0
+  wdat4$EDBday[wdat4$Tmean<=10]=wdat4$Tmean[wdat4$Tmean<=10]-10
+  
+  
+  for (i in c(modelstart:nrow(wdat4))) {
+    
+    wdat4$EDB[i]=sum(wdat4$EDBday[modelstart:i])
+    
+  }
+  
+  
+  
+  wdat4$Ttheco=wdat4$Tmean-ecoTth
+  
+  wdat4$DDceco=0
+  wdat4$DDceco[wdat4$Ttheco<0]=wdat4$Ttheco[wdat4$Ttheco<0]
+  
+  wdat4$DDheco=0
+  wdat4$DDheco[wdat4$Ttheco>0]=wdat4$Ttheco[wdat4$Ttheco>0]
+  
+  
+  wdat4$DDhendo[wdat4$EDB<(boundEDB)]=0
+  wdat4$DDcendo[wdat4$EDB<(boundEDB)]=0
+  
+  wdat4$DDheco[wdat4$EDB>(boundEDB)]=0
+  wdat4$DDceco[wdat4$EDB>(boundEDB)]=0
+  
+  
+  
+  
+  
+  wdat4$CH=Hcinitial
+  
+  
+  
+  for (i in c(modelstart:nrow(wdat4))) {
+    
+    wdat4$CH[i]=wdat4$CH[i-1]+ 
+      ((wdat4$DDcendo[i]*kaendo+wdat4$DDceco[i]*kaeco)*(1-((Hcmin - wdat4$CH[i-1])/(Hcmin - Hcmax)))+
+         (wdat4$DDhendo[i]*kdendo)*((1- ((wdat4$CH[i-1]-Hcmax)/(Hcmin - Hcmax))^Theta))+
+         (wdat4$DDheco[i]*kdeco)*  ((1- ((wdat4$CH[i-1]-Hcmax)/(Hcmin - Hcmax))^Theta)))
+    
+  }
+  
+  
+  wdat5=rbind(wdat5,wdat4)
+        
+
+}
+
+
+datConvalmeanferg=merge(datConvalmean,wdat5[c(1,18)])
+
+plot(datConvalmeanferg$LTE,datConvalmeanferg$CH)
+
+
+ggplot()+
+  geom_line(data=wdatvalb,aes(Date,MaxC), col="red3")+
+  geom_line(data=wdatvalb,aes(Date,MinC), col="lightblue4")+
+  #geom_line(data=wdatvalb,aes(Date,tlim))+
+  geom_line(data=wdat5,aes(Date,CH), lty=2)+
+  geom_abline(slope = 0,intercept=-24)+
+  geom_segment(data=datConvalmeanb,aes(x=Date,xend=Date,y=CH,yend=LTE, col=(CH-LTE)))+
+  geom_line(data=wdatvalb,aes(x=Date,y=CH))+
+  geom_point(data=datConvalmeanb, aes(Date,LTE),shape=21, fill="white")+
+  #geom_point(data=datConval, aes(Date,LTE, fill=PI),shape=21, stat="summary")+
+  scale_y_continuous(limits=c(NA,35),breaks=c(-30,-25,-20,-15,-10,-5,0,10,20,30))+
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month") +
+  ylab("Temperature (ºC)")+
+  scale_color_gradient2(midpoint=0, low="dodgerblue4",
+                     high="red", space ="Lab" )+
+  facet_grid(~Dataset, scales="free_x")+
+  theme_bw(base_size=11) +
+  theme(legend.position = "right",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=11, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+
+
+ferrmse=sqrt(sum((datConvalmeanferg$LTE-datConvalmeanferg$CH)^2)/nrow(datConvalmeanferg))
+ferbias=sum((datConvalmeanferg$LTE-datConvalmeanferg$CH))/nrow(datConvalmeanferg)
+fercorrelation=cor(datConvalmeanferg$LTE,datConvalmeanferg$CH)
+
+correlation=cor(datConvalmeanb$LTE,datConvalmeanb$CH)
+
+
+rmse
+bias
+correlation
+
+
+ferrmse
+ferbias
+fercorrelation
+
+
+plota=ggplot()+
+  ggtitle("Ferguson")+
+  geom_point(data=datConvalmeanferg, aes(x=LTE,y=CH))+
+  geom_abline(slope=1,intercept = 0, lty=2)+
+  geom_smooth(data=datConvalmeanferg, aes(x=LTE,y=CH), method="lm",fullrange=T, se=F, col="black")+
+  scale_y_continuous(limits=c(-35,-5), breaks=c(-30,-25,-20,-15,-10,-5))+
+  scale_x_continuous(limits=c(-35,-5), breaks=c(-30,-25,-20,-15,-10,-5))+
+  theme_bw(base_size=11) +
+  theme(legend.position = "right",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=11, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+plotb=ggplot()+
+  ggtitle("New")+
+  geom_point(data=datConvalmeanb, aes(x=LTE,y=CH))+
+  geom_abline(slope=1,intercept = 0, lty=2)+
+  geom_smooth(data=datConvalmeanb, aes(x=LTE,y=CH), method="lm",fullrange=T, se=F, col="black")+
+  scale_y_continuous(limits=c(-35,-5), breaks=c(-30,-25,-20,-15,-10,-5))+
+  scale_x_continuous(limits=c(-35,-5), breaks=c(-30,-25,-20,-15,-10,-5))+
+  theme_bw(base_size=11) +
+  theme(legend.position = "right",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=11, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+
+plotb+plota
+
+```
+
+
+
+
